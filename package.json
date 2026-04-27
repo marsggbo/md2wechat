@@ -2,7 +2,7 @@
   "name": "md2wechat",
   "displayName": "MD2WeChat - Markdown 转微信公众号",
   "description": "将 Markdown 转换为微信公众号排版，支持 LaTeX 公式渲染、实时预览、一键复制和直接上传草稿箱",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "marsggbo",
   "license": "MIT",
   "engines": {
@@ -129,7 +129,8 @@
   },
   "scripts": {
     "package": "vsce package",
-    "install-ext": "vsce package && \"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\" --install-extension md2wechat-1.0.0.vsix"
+    "install-ext": "vsce package && \"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\" --install-extension md2wechat-1.1.0.vsix",
+    "publish": "vsce publish"
   },
   "devDependencies": {
     "@vscode/vsce": "^2.24.0"

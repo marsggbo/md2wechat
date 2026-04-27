@@ -6,6 +6,7 @@ const fs = require('fs');
 const https = require('https');
 
 const { renderMarkdown, buildFullHtml, buildWechatCopyHtml, convertMarkdownToWeChat } = require('./lib/converter');
+const { THEMES, DEFAULT_THEME_ID, getTheme } = require('./lib/themes');
 
 // ─────────────────────────────────────────────
 //  全局状态
@@ -22,6 +23,9 @@ const previewPanels = new Map();
 
 /** Map<mdFilePath, NodeJS.Timeout> */
 const debounceTimers = new Map();
+
+/** 当前选中的主题 ID（全局，所有预览共享） */
+let currentThemeId = DEFAULT_THEME_ID;
 
 // ─────────────────────────────────────────────
 //  激活 / 停用
@@ -228,7 +232,8 @@ function scheduleUpdate(mdPath) {
 function updatePreview(panel, mdPath) {
   try {
     const { bodyHtml, title } = renderMarkdown(mdPath);
-    panel.webview.postMessage({ type: 'update', bodyHtml, title });
+    const theme = getTheme(currentThemeId);
+    panel.webview.postMessage({ type: 'update', bodyHtml, title, theme: { id: theme.id, css: theme.css, wrapperBg: theme.wrapperBg } });
   } catch (err) {
     panel.webview.postMessage({ type: 'error', message: err.message });
   }
@@ -245,6 +250,12 @@ async function handleWebviewMessage(msg, panel, mdPath) {
       updatePreview(panel, mdPath);
       // 发送当前配置
       sendConfig(panel);
+      // 发送主题列表
+      panel.webview.postMessage({
+        type: 'themeList',
+        themes: THEMES.map((t) => ({ id: t.id, name: t.name })),
+        currentId: currentThemeId,
+      });
       break;
     }
 
@@ -284,12 +295,20 @@ async function handleWebviewMessage(msg, panel, mdPath) {
         const templateName = cfg.get('template', 'wechat');
         const templatePath = getTemplatePath(workspacePath, templateName);
         const { bodyHtml } = renderMarkdown(mdPath);
-        const html = buildWechatCopyHtml(bodyHtml, templatePath);
+        const theme = getTheme(currentThemeId);
+        const html = buildWechatCopyHtml(bodyHtml, templatePath, theme);
         panel.webview.postMessage({ type: 'wechatHtml', html });
       } catch (err) {
         log(`buildWechatCopyHtml 失败: ${err.message}`);
         panel.webview.postMessage({ type: 'wechatHtmlError', message: err.message });
       }
+      break;
+    }
+
+    case 'setTheme': {
+      currentThemeId = msg.themeId || DEFAULT_THEME_ID;
+      // 重新渲染预览
+      updatePreview(panel, mdPath);
       break;
     }
 
@@ -726,6 +745,12 @@ function getWebviewHtml(webview, _bodyHtml, mdPath) {
   <!-- 工具栏 -->
   <div class="toolbar">
     <span class="toolbar-title" id="doc-title">MD2WeChat 预览</span>
+    <select id="theme-select" title="切换主题" style="
+      padding:5px 8px; border:none; border-radius:4px; cursor:pointer;
+      font-size:13px; background:#3a3a3a; color:#eee; outline:none;
+    ">
+      <option value="">主题...</option>
+    </select>
     <button class="btn btn-primary" id="btn-copy" title="选中并复制预览区域内容，可直接粘贴到微信公众号编辑器">
       📋 复制内容
     </button>
@@ -834,6 +859,19 @@ function getWebviewHtml(webview, _bodyHtml, mdPath) {
       el._timer = setTimeout(() => { el.className = 'toast'; }, duration);
     }
 
+    function applyTheme(theme) {
+      // 替换主题样式
+      let styleEl = document.getElementById('theme-style');
+      if (!styleEl) {
+        styleEl = document.createElement('style');
+        styleEl.id = 'theme-style';
+        document.head.appendChild(styleEl);
+      }
+      styleEl.textContent = '.article-wrapper { background: ' + theme.wrapperBg + '; } .article-wrapper ' +
+        theme.css.replace(/([^}]+{)/g, (m) => '.article-wrapper ' + m);
+      document.querySelector('.article-wrapper').style.background = theme.wrapperBg;
+    }
+
     function togglePanel(panelId, stateVar, otherPanelId, otherStateVar) {
       const panel  = document.getElementById(panelId);
       const other  = document.getElementById(otherPanelId);
@@ -853,6 +891,11 @@ function getWebviewHtml(webview, _bodyHtml, mdPath) {
     }
 
     // ─── 按钮事件 ───
+
+    // 主题切换
+    document.getElementById('theme-select').addEventListener('change', (e) => {
+      vscode.postMessage({ type: 'setTheme', themeId: e.target.value });
+    });
 
     // 复制内容（向 extension 请求带内联 CSS 的 HTML，再写入剪贴板）
     document.getElementById('btn-copy').addEventListener('click', () => {
@@ -937,9 +980,25 @@ function getWebviewHtml(webview, _bodyHtml, mdPath) {
           document.getElementById('doc-title').textContent = currentTitle
             ? \`预览: \${currentTitle}\`
             : 'MD2WeChat 预览';
+          // 应用主题
+          if (msg.theme) {
+            applyTheme(msg.theme);
+          }
           // 填充标题输入框（如果为空）
           const titleInput = document.getElementById('input-title');
           if (!titleInput.value && currentTitle) titleInput.value = currentTitle;
+          break;
+        }
+        case 'themeList': {
+          const sel = document.getElementById('theme-select');
+          sel.innerHTML = '';
+          (msg.themes || []).forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t.id;
+            opt.textContent = t.name;
+            if (t.id === msg.currentId) opt.selected = true;
+            sel.appendChild(opt);
+          });
           break;
         }
         case 'error': {

@@ -132,10 +132,10 @@
   },
   "scripts": {
     "package": "vsce package",
-    "install-ext": "vsce package && \"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\" --install-extension md2wechat-1.6.0.vsix",
+    "install-ext": "vsce package && \"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\" --install-extension \"md2wechat-$(node -p \"require('./package.json').version\").vsix\"",
     "publish": "vsce publish"
   },
   "devDependencies": {
-    "@vscode/vsce": "^2.24.0"
+    "@vscode/vsce": "^3.9.1"
   }
 }

@@ -91,8 +91,10 @@ function parseColor(hex) {
   return [parseInt(c.slice(0, 2), 16), parseInt(c.slice(2, 4), 16), parseInt(c.slice(4, 6), 16)];
 }
 
-// ── 主逻辑 ───────────────────────────────────────────────────────────────────
+// ── 主逻辑（完全复刻 Python 版） ────────────────────────────────────────────
 async function main() {
+  const { PNG } = require('pngjs');
+
   fs.mkdirSync(outputDir, { recursive: true });
 
   const executablePath = findChromium();
@@ -110,105 +112,100 @@ async function main() {
   });
 
   try {
-    // 1. 渲染页面
+    // ── 1. Playwright 渲染并截全页（与 Python 版完全一致） ─────────────────
     const page = await browser.newPage({ viewport: { width: imgW, height: 900 } });
     const fileUrl = 'file://' + path.resolve(htmlFile);
     await page.goto(fileUrl, { waitUntil: 'networkidle', timeout: 30000 });
-
-    // 注入 padding + 背景色
-    await page.addStyleTag({
-      content: `html { background:${bg}; } body { background:${bg}; margin:0; padding:${padding}px; box-sizing:border-box; }`,
-    });
-
-    await page.waitForFunction(() => document.fonts.ready);
     await page.waitForTimeout(800);
 
-    // 2. 截全页
     console.log('INFO:正在截取全页…');
-    const fullBuf = await page.screenshot({ fullPage: true, type: 'png' });
-    console.log(`INFO:截图完成 (${(fullBuf.length / 1024).toFixed(1)} KB)，开始分析空白行…`);
+    const screenshotBuf = await page.screenshot({ fullPage: true, type: 'png' });
+    console.log(`INFO:截图完成 (${(screenshotBuf.length / 1024).toFixed(1)} KB)，开始分割`);
 
-    // 3. 把 PNG 加载进 Chromium Canvas，逐行扫描像素找安全切割点
+    // ── 2. 用 pngjs 解码 PNG 为原始像素 ──────────────────────────────────────
+    const img = PNG.sync.read(screenshotBuf);
+    const W = img.width;
+    const H = img.height;
+    const data = img.data; // RGBA Buffer
+
+    // ── 3. 添加上下 padding（与 Python 版 Image.new + paste 一致）──────────
+    const padH = H + 2 * padding;
+    const padded = new PNG({ width: W, height: padH });
+    // 填充背景色
     const bgRgb = parseColor(bg);
-    const dataUrl = 'data:image/png;base64,' + fullBuf.toString('base64');
-
-    const cutInfo = await page.evaluate(async ({ dataUrl, bgRgb, maxH, tolerance }) => {
-      // 用 Image + Canvas 拿到 ImageData
-      const img = await new Promise((resolve, reject) => {
-        const im = new Image();
-        im.onload  = () => resolve(im);
-        im.onerror = reject;
-        im.src = dataUrl;
-      });
-      const W = img.naturalWidth, H = img.naturalHeight;
-      const canvas = document.createElement('canvas');
-      canvas.width = W; canvas.height = H;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-      const data = ctx.getImageData(0, 0, W, H).data;
-
-      const [bgR, bgG, bgB] = bgRgb;
-
-      function isBlankRow(y) {
-        const rowStart = y * W * 4;
-        for (let x = 0; x < W; x++) {
-          const i = rowStart + x * 4;
-          if (Math.abs(data[i]     - bgR) > tolerance ||
-              Math.abs(data[i + 1] - bgG) > tolerance ||
-              Math.abs(data[i + 2] - bgB) > tolerance) {
-            return false;
-          }
-        }
-        return true;
+    for (let y = 0; y < padH; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        padded.data[i]     = bgRgb[0];
+        padded.data[i + 1] = bgRgb[1];
+        padded.data[i + 2] = bgRgb[2];
+        padded.data[i + 3] = 255;
       }
+    }
+    // 把原图贴到 (0, padding) 位置
+    for (let y = 0; y < H; y++) {
+      const srcOff = y * W * 4;
+      const dstOff = (y + padding) * W * 4;
+      data.copy(padded.data, dstOff, srcOff, srcOff + W * 4);
+    }
 
-      // 与 Python 版本完全一致的策略：
-      // 从目标切割点往上找最近的空白行（最少切到一半高度）
-      const cuts = [];
-      let startY = 0;
-      while (startY < H) {
-        let endY = Math.min(startY + maxH, H);
-        if (endY < H) {
-          const minCut = startY + Math.floor(maxH / 2);
-          let cutY = endY;
-          while (cutY > minCut) {
-            if (isBlankRow(cutY - 1)) { endY = cutY; break; }
-            cutY--;
-          }
+    const totalW = W;
+    const totalH = padH;
+    const pixels = padded.data;
+
+    // ── 4. 智能分片：尽量在空白行处切割（与 Python 版 is_blank_row 一致）──
+    function isBlankRow(y, tolerance) {
+      for (let x = 0; x < totalW; x++) {
+        const i = (y * totalW + x) * 4;
+        if (Math.abs(pixels[i]     - bgRgb[0]) > tolerance ||
+            Math.abs(pixels[i + 1] - bgRgb[1]) > tolerance ||
+            Math.abs(pixels[i + 2] - bgRgb[2]) > tolerance) {
+          return false;
         }
-        cuts.push([startY, endY]);
-        startY = endY;
       }
-      return { W, H, cuts };
-    }, { dataUrl, bgRgb, maxH: imgH, tolerance: 10 });
+      return true;
+    }
 
-    console.log(`INFO:总高度 ${cutInfo.H}px → ${cutInfo.cuts.length} 张`);
+    const slices = [];  // [[startY, endY], ...]
+    let startY = 0;
+    while (startY < totalH) {
+      let endY = Math.min(startY + imgH, totalH);
+      if (endY < totalH) {
+        // 从切割点往上找最近的空白行（搜索范围：下半段的 50%）
+        const minCut = startY + Math.floor(imgH / 2);
+        let cutY = endY;
+        while (cutY > minCut) {
+          if (isBlankRow(cutY - 1, 10)) {
+            endY = cutY;
+            break;
+          }
+          cutY--;
+        }
+        if (cutY <= minCut) {
+          console.log(`INFO:第 ${slices.length + 1} 张未找到空白行，使用默认切割点 y=${endY}`);
+        } else {
+          console.log(`INFO:第 ${slices.length + 1} 张找到空白行 y=${endY}`);
+        }
+      }
+      slices.push([startY, endY]);
+      startY = endY;
+    }
 
-    // 4. 用同一个 canvas 切片 → toBlob → 保存到本地
+    console.log(`INFO:总高度 ${totalH}px → ${slices.length} 张`);
+
+    // ── 5. 用 pngjs 切片并保存（与 Python 版 img.crop 一致） ────────────────
     const saved = [];
-    for (let i = 0; i < cutInfo.cuts.length; i++) {
-      const [y0, y1] = cutInfo.cuts[i];
-      const sliceB64 = await page.evaluate(async ({ dataUrl, y0, y1, W }) => {
-        const img = await new Promise((resolve, reject) => {
-          const im = new Image();
-          im.onload = () => resolve(im); im.onerror = reject;
-          im.src = dataUrl;
-        });
-        const sliceCanvas = document.createElement('canvas');
-        sliceCanvas.width = W; sliceCanvas.height = y1 - y0;
-        const sctx = sliceCanvas.getContext('2d');
-        sctx.drawImage(img, 0, -y0);
-        const blob = await new Promise(r => sliceCanvas.toBlob(r, 'image/png'));
-        const ab = await blob.arrayBuffer();
-        // 转 base64
-        const bytes = new Uint8Array(ab);
-        let bin = '';
-        for (let k = 0; k < bytes.length; k++) bin += String.fromCharCode(bytes[k]);
-        return btoa(bin);
-      }, { dataUrl, y0, y1, W: cutInfo.W });
-
+    for (let i = 0; i < slices.length; i++) {
+      const [y0, y1] = slices[i];
+      const sliceH = y1 - y0;
+      const slice = new PNG({ width: totalW, height: sliceH });
+      for (let y = 0; y < sliceH; y++) {
+        const srcOff = (y0 + y) * totalW * 4;
+        const dstOff = y * totalW * 4;
+        pixels.copy(slice.data, dstOff, srcOff, srcOff + totalW * 4);
+      }
       const outPath = path.join(outputDir, `xhs_${String(i + 1).padStart(2, '0')}.png`);
-      fs.writeFileSync(outPath, Buffer.from(sliceB64, 'base64'));
+      fs.writeFileSync(outPath, PNG.sync.write(slice));
       console.log(`SAVED:${outPath}`);
       saved.push(outPath);
     }

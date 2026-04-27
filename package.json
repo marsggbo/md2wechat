@@ -1,0 +1,127 @@
+{
+  "name": "md2wechat",
+  "displayName": "MD2WeChat - Markdown 转微信公众号",
+  "description": "将 Markdown 转换为微信公众号排版，支持 LaTeX 公式渲染、实时预览、一键复制和直接上传草稿箱",
+  "version": "1.0.0",
+  "publisher": "marsggbo",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": ["Other", "Formatters"],
+  "keywords": [
+    "markdown",
+    "wechat",
+    "微信公众号",
+    "公式",
+    "LaTeX",
+    "KaTeX",
+    "preview"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/marsggbo/md2wechat"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:markdown"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "md2wechat.preview",
+        "title": "预览微信公众号效果",
+        "category": "md2wechat",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "md2wechat.convert",
+        "title": "导出微信公众号 HTML 文件",
+        "category": "md2wechat",
+        "icon": "$(export)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "md2wechat.preview",
+          "when": "resourceLangId == markdown",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "md2wechat.preview",
+          "when": "resourceExtname == .md",
+          "group": "1_modification"
+        },
+        {
+          "command": "md2wechat.convert",
+          "when": "resourceExtname == .md",
+          "group": "1_modification"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "md2wechat.preview",
+          "when": "resourceLangId == markdown",
+          "group": "1_modification"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "md2wechat.preview",
+        "key": "ctrl+shift+w",
+        "mac": "cmd+shift+w",
+        "when": "resourceLangId == markdown"
+      }
+    ],
+    "configuration": {
+      "title": "MD2WeChat",
+      "properties": {
+        "md2wechat.appid": {
+          "type": "string",
+          "default": "",
+          "description": "微信公众号 AppID（用于上传草稿箱，通过 FastPen 服务）"
+        },
+        "md2wechat.appSecret": {
+          "type": "string",
+          "default": "",
+          "description": "微信公众号 AppSecret（用于上传草稿箱，通过 FastPen 服务）"
+        },
+        "md2wechat.author": {
+          "type": "string",
+          "default": "",
+          "description": "默认作者名称"
+        },
+        "md2wechat.digest": {
+          "type": "string",
+          "default": "",
+          "description": "默认文章摘要"
+        },
+        "md2wechat.template": {
+          "type": "string",
+          "default": "wechat",
+          "description": "模板名称（可在工作区 templates/ 目录下放置同名 .html 模板）"
+        },
+        "md2wechat.outputPath": {
+          "type": "string",
+          "default": "build",
+          "description": "导出 HTML 的目录（相对于工作区根目录）"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "gray-matter": "^4.0.3",
+    "highlight.js": "^11.9.0",
+    "juice": "^9.1.0",
+    "katex": "^0.16.0",
+    "marked": "^11.1.1"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^2.24.0"
+  }
+}

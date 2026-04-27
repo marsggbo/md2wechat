@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 
-const { renderMarkdown, buildFullHtml, convertMarkdownToWeChat } = require('./lib/converter');
+const { renderMarkdown, buildFullHtml, buildWechatCopyHtml, convertMarkdownToWeChat } = require('./lib/converter');
 
 // ─────────────────────────────────────────────
 //  全局状态
@@ -273,6 +273,23 @@ async function handleWebviewMessage(msg, panel, mdPath) {
 
     case 'exportHtml': {
       await handleConvert(vscode.Uri.file(mdPath));
+      break;
+    }
+
+    case 'getWechatHtml': {
+      try {
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(mdPath));
+        const workspacePath = workspaceFolder ? workspaceFolder.uri.fsPath : path.dirname(mdPath);
+        const cfg = vscode.workspace.getConfiguration('md2wechat');
+        const templateName = cfg.get('template', 'wechat');
+        const templatePath = getTemplatePath(workspacePath, templateName);
+        const { bodyHtml } = renderMarkdown(mdPath);
+        const html = buildWechatCopyHtml(bodyHtml, templatePath);
+        panel.webview.postMessage({ type: 'wechatHtml', html });
+      } catch (err) {
+        log(`buildWechatCopyHtml 失败: ${err.message}`);
+        panel.webview.postMessage({ type: 'wechatHtmlError', message: err.message });
+      }
       break;
     }
 
@@ -837,21 +854,12 @@ function getWebviewHtml(webview, _bodyHtml, mdPath) {
 
     // ─── 按钮事件 ───
 
-    // 复制内容（选中预览区 innerHTML 后 execCommand copy）
+    // 复制内容（向 extension 请求带内联 CSS 的 HTML，再写入剪贴板）
     document.getElementById('btn-copy').addEventListener('click', () => {
-      const content = document.getElementById('preview-content');
-      const range = document.createRange();
-      range.selectNodeContents(content);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-      try {
-        document.execCommand('copy');
-        showToast('✅ 已复制！直接粘贴到微信公众号编辑器即可', 'success');
-      } catch (e) {
-        showToast('复制失败，请手动 Ctrl+A 后复制', 'error');
-      }
-      sel.removeAllRanges();
+      const btn = document.getElementById('btn-copy');
+      btn.disabled = true;
+      btn.textContent = '⏳ 处理中...';
+      vscode.postMessage({ type: 'getWechatHtml' });
     });
 
     document.getElementById('btn-style').addEventListener('click', () => {
@@ -937,6 +945,53 @@ function getWebviewHtml(webview, _bodyHtml, mdPath) {
         case 'error': {
           document.getElementById('preview-content').innerHTML =
             \`<p style="color:red;font-family:monospace;">⚠️ 渲染错误：\${msg.message}</p>\`;
+          break;
+        }
+        case 'wechatHtml': {
+          const btn = document.getElementById('btn-copy');
+          btn.disabled = false;
+          btn.textContent = '📋 复制内容';
+          const html = msg.html || '';
+          // 优先用 ClipboardItem API，保留富文本格式
+          if (navigator.clipboard && window.ClipboardItem) {
+            navigator.clipboard.write([
+              new ClipboardItem({
+                'text/html':  new Blob([html], { type: 'text/html' }),
+                'text/plain': new Blob([
+                  document.getElementById('preview-content').innerText || ''
+                ], { type: 'text/plain' }),
+              }),
+            ]).then(() => {
+              showToast('✅ 已复制！直接粘贴到微信公众号编辑器即可', 'success');
+            }).catch(() => {
+              // 降级：execCommand
+              fallbackCopy();
+            });
+          } else {
+            fallbackCopy();
+          }
+          function fallbackCopy() {
+            const tmp = document.createElement('div');
+            tmp.style.cssText = 'position:fixed;left:-9999px;top:0;';
+            tmp.innerHTML = html;
+            document.body.appendChild(tmp);
+            const range = document.createRange();
+            range.selectNodeContents(tmp);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            try { document.execCommand('copy'); showToast('✅ 已复制！直接粘贴到微信公众号编辑器即可', 'success'); }
+            catch (_) { showToast('复制失败，请手动 Ctrl+A 后复制', 'error'); }
+            sel.removeAllRanges();
+            document.body.removeChild(tmp);
+          }
+          break;
+        }
+        case 'wechatHtmlError': {
+          const btn = document.getElementById('btn-copy');
+          btn.disabled = false;
+          btn.textContent = '📋 复制内容';
+          showToast('复制失败：' + (msg.message || '未知错误'), 'error');
           break;
         }
         case 'config': {

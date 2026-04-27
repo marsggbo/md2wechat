@@ -1,5 +1,8 @@
-node_modules/
 *.vsix
 out/
 dist/
 .DS_Store
+.vscode/
+node_modules/@vscode
+node_modules/@azure
+node_modules/@typespec

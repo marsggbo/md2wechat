@@ -8,7 +8,10 @@
   "engines": {
     "vscode": "^1.75.0"
   },
-  "categories": ["Other", "Formatters"],
+  "categories": [
+    "Other",
+    "Formatters"
+  ],
   "keywords": [
     "markdown",
     "wechat",
@@ -24,7 +27,9 @@
   },
   "main": "./extension.js",
   "activationEvents": [
-    "onLanguage:markdown"
+    "onLanguage:markdown",
+    "onCommand:md2wechat.preview",
+    "onCommand:md2wechat.convert"
   ],
   "contributes": {
     "commands": [
@@ -119,7 +124,12 @@
     "highlight.js": "^11.9.0",
     "juice": "^9.1.0",
     "katex": "^0.16.0",
-    "marked": "^11.1.1"
+    "marked": "^11.1.1",
+    "mathjax-full": "^3.2.1"
+  },
+  "scripts": {
+    "package": "vsce package",
+    "install-ext": "vsce package && \"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\" --install-extension md2wechat-1.0.0.vsix"
   },
   "devDependencies": {
     "@vscode/vsce": "^2.24.0"
